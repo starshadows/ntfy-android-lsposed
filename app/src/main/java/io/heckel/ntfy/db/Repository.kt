@@ -384,6 +384,26 @@ class Repository(private val sharedPrefs: SharedPreferences, database: Database)
         }
     }
 
+    fun getShowSubscriberNotification(): Boolean {
+        return sharedPrefs.getBoolean(SHARED_PREFS_SHOW_SUBSCRIBER_NOTIFICATION, false) // Disabled by default!
+    }
+
+    fun setShowSubscriberNotification(enabled: Boolean) {
+        sharedPrefs.edit {
+            putBoolean(SHARED_PREFS_SHOW_SUBSCRIBER_NOTIFICATION, enabled)
+        }
+    }
+
+    fun isLsposedModeEnabled(): Boolean {
+        return sharedPrefs.getBoolean(SHARED_PREFS_LSPOSED_MODE, true)
+    }
+
+    fun setLsposedModeEnabled(enabled: Boolean) {
+        sharedPrefs.edit {
+            putBoolean(SHARED_PREFS_LSPOSED_MODE, enabled)
+        }
+    }
+
     fun getInsistentMaxPriorityEnabled(): Boolean {
         return sharedPrefs.getBoolean(SHARED_PREFS_INSISTENT_MAX_PRIORITY_ENABLED, false) // Disabled by default
     }
@@ -655,6 +675,8 @@ class Repository(private val sharedPrefs: SharedPreferences, database: Database)
         const val SHARED_PREFS_DYNAMIC_COLORS = "DynamicColors"
         const val SHARED_PREFS_BROADCAST_ENABLED = "BroadcastEnabled"
         const val SHARED_PREFS_UNIFIEDPUSH_ENABLED = "UnifiedPushEnabled"
+        const val SHARED_PREFS_SHOW_SUBSCRIBER_NOTIFICATION = "ShowSubscriberNotification"
+        const val SHARED_PREFS_LSPOSED_MODE = "LsposedMode"
         const val SHARED_PREFS_INSISTENT_MAX_PRIORITY_ENABLED = "InsistentMaxPriority"
         const val SHARED_PREFS_RECORD_LOGS_ENABLED = "RecordLogs"
         const val SHARED_PREFS_MESSAGE_BAR_ENABLED = "MessageBarEnabled"

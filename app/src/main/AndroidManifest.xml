@@ -15,7 +15,8 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/> <!-- Allows to ignore battery optimization without going to the settings -->
 
     <!-- UnifiedPush "raise to foreground" requirement, see https://unifiedpush.org/developers/spec/android/#service-to-raise-to-the-foreground -->
-    <queries>
+        <queries>
+        <package android:name="com.android.systemui" />
         <intent>
             <action android:name="org.unifiedpush.android.connector.RAISE_TO_FOREGROUND" />
         </intent>
@@ -207,5 +208,29 @@
                     android:name="android.support.FILE_PROVIDER_PATHS"
                     android:resource="@xml/file_paths"/>
         </provider>
+            <!-- LSPosed / Xposed Module Configuration -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="ntfy 后台常驻推送与开机自启动模块（基于 SystemUI 注入，免开应用接收通知，默认关闭常驻通知）" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="102" />
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposed_scopes" />
+
+        <!-- Notification Receiver from SystemUI -->
+        <receiver
+            android:name=".xposed.NtfySyncReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.heckel.ntfy.ACTION_SYSTEM_NOTIFICATION_ARRIVED" />
+                <action android:name="io.heckel.ntfy.ACTION_REQUEST_SYNC_SUBSCRIPTIONS" />
+                <action android:name="io.heckel.ntfy.ACTION_REPLY_LSP_STATUS" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

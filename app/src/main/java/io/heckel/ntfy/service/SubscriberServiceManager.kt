@@ -21,6 +21,13 @@ import kotlinx.coroutines.withContext
 class SubscriberServiceManager(private val context: Context) {
     fun refresh() {
         Log.d(TAG, "Enqueuing work to refresh subscriber service")
+        (context.applicationContext as? Application)?.let { app ->
+            io.heckel.ntfy.xposed.NtfyBridge.syncToSystemUI(context, app.repository)
+            if (io.heckel.ntfy.xposed.NtfyBridge.isXposedHookActive || app.repository.isLsposedModeEnabled()) {
+                Log.d(TAG, "LSPosed is active; skipping foreground service scheduling")
+                return
+            }
+        }
         val workManager = WorkManager.getInstance(context)
         val startServiceRequest = OneTimeWorkRequest.Builder(ServiceStartWorker::class.java).build()
         workManager.enqueueUniqueWork(WORK_NAME_ONCE, ExistingWorkPolicy.KEEP, startServiceRequest) // Unique avoids races!
@@ -39,6 +46,10 @@ class SubscriberServiceManager(private val context: Context) {
             }
             withContext(Dispatchers.IO) {
                 val app = context.applicationContext as Application
+                if (io.heckel.ntfy.xposed.NtfyBridge.isXposedHookActive || app.repository.isLsposedModeEnabled()) {
+                    Log.d(TAG, "ServiceStartWorker: LSPosed active, skipping service start")
+                    return@withContext
+                }
                 val subscriptionIdsWithInstantStatus = app.repository.getSubscriptionIdsWithInstantStatus()
                 val instantSubscriptions = subscriptionIdsWithInstantStatus.toList().filter { (_, instant) -> instant }.size
                 if (instantSubscriptions > 0) {

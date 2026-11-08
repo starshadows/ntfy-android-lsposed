@@ -280,14 +280,45 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
 
     private fun loadView() {
         // Get extras required for the return to the main activity
-        subscriptionId = intent.getLongExtra(MainActivity.EXTRA_SUBSCRIPTION_ID, 0)
-        subscriptionBaseUrl = intent.getStringExtra(MainActivity.EXTRA_SUBSCRIPTION_BASE_URL) ?: return
-        subscriptionTopic = intent.getStringExtra(MainActivity.EXTRA_SUBSCRIPTION_TOPIC) ?: return
-        subscriptionDisplayName = intent.getStringExtra(MainActivity.EXTRA_SUBSCRIPTION_DISPLAY_NAME) ?: return
-        subscriptionMutedUntil = intent.getLongExtra(MainActivity.EXTRA_SUBSCRIPTION_MUTED_UNTIL, 0L)
+        var sId = intent.getLongExtra(MainActivity.EXTRA_SUBSCRIPTION_ID, 0L)
+        if (sId == 0L) sId = intent.getLongExtra("subscriptionId", 0L)
+        var sBaseUrl = intent.getStringExtra(MainActivity.EXTRA_SUBSCRIPTION_BASE_URL)
+            ?: intent.getStringExtra("subscriptionBaseUrl")
+            ?: intent.getStringExtra("baseUrl")
+        var sTopic = intent.getStringExtra(MainActivity.EXTRA_SUBSCRIPTION_TOPIC)
+            ?: intent.getStringExtra("subscriptionTopic")
+            ?: intent.getStringExtra("topic")
+        var sDisplayName = intent.getStringExtra(MainActivity.EXTRA_SUBSCRIPTION_DISPLAY_NAME)
+            ?: intent.getStringExtra("subscriptionDisplayName")
+        var sMutedUntil = intent.getLongExtra(MainActivity.EXTRA_SUBSCRIPTION_MUTED_UNTIL, 0L)
+
+        // Fallback: resolve from repository if any field is missing
+        if ((sId != 0L) && (sBaseUrl == null || sTopic == null)) {
+            val sub = kotlinx.coroutines.runBlocking(Dispatchers.IO) { repository.getSubscription(sId) }
+            if (sub != null) {
+                sBaseUrl = sub.baseUrl
+                sTopic = sub.topic
+                if (sDisplayName == null) sDisplayName = displayName(appBaseUrl, sub)
+                sMutedUntil = sub.mutedUntil
+            }
+        } else if ((sId == 0L || sDisplayName == null) && sBaseUrl != null && sTopic != null) {
+            val sub = kotlinx.coroutines.runBlocking(Dispatchers.IO) { repository.getSubscription(sBaseUrl, sTopic) }
+            if (sub != null) {
+                sId = sub.id
+                if (sDisplayName == null) sDisplayName = displayName(appBaseUrl, sub)
+                sMutedUntil = sub.mutedUntil
+            }
+        }
+
+        if (sBaseUrl == null || sTopic == null) return
+        subscriptionId = sId
+        subscriptionBaseUrl = sBaseUrl
+        subscriptionTopic = sTopic
+        subscriptionDisplayName = sDisplayName ?: sTopic
+        subscriptionMutedUntil = sMutedUntil
 
         // Set title
-        val subscriptionBaseUrl = intent.getStringExtra(MainActivity.EXTRA_SUBSCRIPTION_BASE_URL) ?: return
+        val subscriptionBaseUrl = sBaseUrl
         val topicUrl = topicShortUrl(subscriptionBaseUrl, subscriptionTopic)
         title = subscriptionDisplayName
 
@@ -407,6 +438,14 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
 
         // Setup FAB and message bar
         setupPublishUI()
+
+        // Auto refresh messages on view load and mark all as read
+        if (subscriptionId != 0L) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                repository.markAllAsRead(subscriptionId)
+            }
+            refresh(showToast = false)
+        }
     }
 
     private fun setupPublishUI() {
@@ -526,11 +565,35 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        loadView()
+        if (subscriptionId != 0L) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                repository.markAllAsRead(subscriptionId)
+            }
+            refresh(showToast = false)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
 
         // Mark as "open" so we don't send notifications while this is open
         repository.detailViewSubscriptionId.set(subscriptionId)
+
+        // Clear system notifications for this topic and inform SystemUI that topic is active
+        io.heckel.ntfy.xposed.NtfyBridge.clearSystemNotifications(this, topic = subscriptionTopic)
+        io.heckel.ntfy.xposed.NtfyBridge.notifyTopicActive(this, subscriptionTopic)
+
+        // Mark all as read immediately and refresh notifications when resumed
+        if (subscriptionId != 0L) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                repository.markAllAsRead(subscriptionId)
+            }
+            refresh(showToast = false)
+        }
 
         // Update buttons (this is for when we return from the preferences screen)
         lifecycleScope.launch(Dispatchers.IO) {
@@ -553,6 +616,7 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
         }
         Log.d(TAG, "onPause hook: Marking subscription $subscriptionId as 'not open'")
         repository.detailViewSubscriptionId.set(0) // Mark as closed
+        io.heckel.ntfy.xposed.NtfyBridge.notifyTopicActive(this, null)
     }
 
     private fun maybeCancelNotificationPopups(notifications: List<Notification>) {
@@ -561,9 +625,10 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
             lifecycleScope.launch(Dispatchers.IO) {
                 notificationsWithPopups.forEach { notification ->
                     notifier?.cancel(notification)
-                    // Do NOT remove the notificationId here, we need that for the UI indicators; we'll remove it in onPause()
                 }
+                repository.markAllAsRead(subscriptionId)
             }
+            io.heckel.ntfy.xposed.NtfyBridge.clearSystemNotifications(this, topic = subscriptionTopic)
         }
     }
 
@@ -800,29 +865,41 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
         }
     }
 
-    private fun refresh() {
-        Log.d(TAG, "Fetching cached notifications for ${topicShortUrl(subscriptionBaseUrl, subscriptionTopic)}")
+    private fun refresh(showToast: Boolean = true) {
+        Log.d(TAG, "Fetching cached notifications for ${topicShortUrl(subscriptionBaseUrl, subscriptionTopic)} (showToast=$showToast)")
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val subscription = repository.getSubscription(subscriptionId) ?: return@launch
                 val newNotifications = poller.poll(subscription)
-                val toastMessage = if (newNotifications.isEmpty()) {
-                    getString(R.string.refresh_message_no_results)
+                if (showToast) {
+                    val toastMessage = if (newNotifications.isEmpty()) {
+                        getString(R.string.refresh_message_no_results)
+                    } else {
+                        getString(R.string.refresh_message_result, newNotifications.size)
+                    }
+                    runOnUiThread {
+                        Toast.makeText(this@DetailActivity, toastMessage, Toast.LENGTH_LONG).show()
+                        mainListContainer.isRefreshing = false
+                    }
                 } else {
-                    getString(R.string.refresh_message_result, newNotifications.size)
-                }
-                runOnUiThread {
-                    Toast.makeText(this@DetailActivity, toastMessage, Toast.LENGTH_LONG).show()
-                    mainListContainer.isRefreshing = false
+                    runOnUiThread {
+                        mainListContainer.isRefreshing = false
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error fetching notifications for ${topicShortUrl(subscriptionBaseUrl, subscriptionTopic)}: ${e.stackTrace}", e)
-                runOnUiThread {
-                    Toast
-                        .makeText(this@DetailActivity, getString(R.string.refresh_message_error_one, e.message), Toast.LENGTH_LONG)
-                        .show()
-                    mainListContainer.isRefreshing = false
+                if (showToast) {
+                    runOnUiThread {
+                        Toast
+                            .makeText(this@DetailActivity, getString(R.string.refresh_message_error_one, e.message), Toast.LENGTH_LONG)
+                            .show()
+                        mainListContainer.isRefreshing = false
+                    }
+                } else {
+                    runOnUiThread {
+                        mainListContainer.isRefreshing = false
+                    }
                 }
             }
         }

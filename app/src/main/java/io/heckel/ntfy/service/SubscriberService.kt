@@ -17,6 +17,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import io.heckel.ntfy.xposed.NtfyBridge
 import io.heckel.ntfy.BuildConfig
 import io.heckel.ntfy.R
 import io.heckel.ntfy.app.Application
@@ -78,6 +79,14 @@ class SubscriberService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand executed with startId: $startId")
+
+        // Sync subscriptions to LSPosed SystemUI engine
+        NtfyBridge.syncToSystemUI(this, repository)
+        if (NtfyBridge.isXposedHookActive || repository.isLsposedModeEnabled()) {
+            Log.i(TAG, "LSPosed is active in SystemUI; delegating background sync to SystemUI and skipping app foreground service")
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         // Safety check: ensure we're in foreground state. This handles edge cases where
         // onCreate() may not have been called or completed before onStartCommand(). See #1520.
@@ -149,7 +158,11 @@ class SubscriberService : Service() {
     override fun onDestroy() {
         Log.d(TAG, "Subscriber service has been destroyed")
         stopService()
-        sendBroadcast(Intent(this, AutoRestartReceiver::class.java)) // Restart it if necessary!
+        if (!NtfyBridge.isXposedHookActive && !repository.isLsposedModeEnabled()) {
+            sendBroadcast(Intent(this, AutoRestartReceiver::class.java))
+        } else {
+            Log.d(TAG, "LSPosed is active; skipping AutoRestartReceiver on destroy")
+        }
         super.onDestroy()
     }
 
@@ -462,7 +475,9 @@ class SubscriberService : Service() {
     private fun createNotificationChannel(): NotificationManager {
         val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         val channelName = getString(R.string.channel_subscriber_service_name) // Show's up in UI
-        val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, channelName, NotificationManager.IMPORTANCE_LOW).let {
+        val showNotification = repository.getShowSubscriberNotification()
+        val importance = if (showNotification) NotificationManager.IMPORTANCE_LOW else NotificationManager.IMPORTANCE_MIN
+        val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, channelName, importance).let {
             it.setShowBadge(false) // Don't show long-press badge
             it
         }

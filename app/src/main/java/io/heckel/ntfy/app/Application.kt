@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import com.google.android.material.color.DynamicColors
 import io.heckel.ntfy.db.Repository
+import io.heckel.ntfy.xposed.NtfyBridge
 import io.heckel.ntfy.service.SubscriberServiceManager
 import io.heckel.ntfy.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +30,7 @@ class Application : Application() {
             DynamicColors.applyToActivitiesIfAvailable(this)
         }
         registerNetworkCallback()
+        NtfyBridge.syncToSystemUI(this, repository)
     }
 
     private fun registerNetworkCallback() {

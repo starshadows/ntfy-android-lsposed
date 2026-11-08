@@ -403,6 +403,8 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
         showHideConnectionErrorMenuItem(repository.getConnectionDetails())
         showHideNoNetworkBanner()
         redrawList()
+        // Automatically clear any persistent system notifications when opening the app
+        io.heckel.ntfy.xposed.NtfyBridge.clearSystemNotifications(this)
     }
 
     private fun showHideBatteryBanner(subscriptions: List<Subscription>) {
